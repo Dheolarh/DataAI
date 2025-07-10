@@ -1,0 +1,7 @@
+{
+  "name": "test-transactions",
+  "type": "module",
+  "scripts": {
+    "test": "node test-transactions.js"
+  }
+}
