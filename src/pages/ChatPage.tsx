@@ -138,6 +138,7 @@ export const ChatPage: React.FC = () => {
                 .filter(entity => entity.type === matchingType)
                 .slice(0, 10);
               setFilteredEntities(filtered);
+              setSearchQuery('');
             } else {
               setFilteredEntities([]);
             }
@@ -155,17 +156,23 @@ export const ChatPage: React.FC = () => {
             });
             setSearchQuery(query);
             
-            // Filter entities by type and search query
-            const filtered = entities
-              .filter(entity => entity.type === type)
-              .filter(entity => {
-                if (query.trim() === '') return true; // Show all if no query
-                return entity.name.toLowerCase().includes(query.toLowerCase()) ||
-                       entity.description?.toLowerCase().includes(query.toLowerCase());
-              })
-              .slice(0, 10);
-            
-            setFilteredEntities(filtered);
+            // If just typed @type:, show all entities of that type
+            if (query === '') {
+              const filtered = entities
+                .filter(entity => entity.type === type)
+                .slice(0, 10);
+              setFilteredEntities(filtered);
+            } else {
+              // Filter entities by type and search query
+              const filtered = entities
+                .filter(entity => entity.type === type)
+                .filter(entity => 
+                  entity.name.toLowerCase().includes(query.toLowerCase()) ||
+                  entity.description?.toLowerCase().includes(query.toLowerCase())
+                )
+                .slice(0, 10);
+              setFilteredEntities(filtered);
+            }
             setShowMentionPopup(true);
           }
         }
@@ -422,7 +429,7 @@ export const ChatPage: React.FC = () => {
                   
                   {/* Mention Popup */}
                   {showMentionPopup && (
-                    <div className="absolute z-50 bottom-full left-0 right-0 mb-1 bg-white border border-gray-200 rounded-md shadow-lg max-h-64 overflow-y-auto">
+                    <div className="absolute z-50 top-full left-0 right-0 mt-1 bg-white border border-gray-200 rounded-md shadow-lg max-h-64 overflow-y-auto">
                       {!mentionSuggestion?.type ? (
                         // Show entity types when just @ is typed
                         <div className="p-2">
@@ -441,8 +448,32 @@ export const ChatPage: React.FC = () => {
                       ) : (
                         // Show filtered entities for the selected type
                         <div className="p-2">
-                          <div className="text-xs text-gray-500 mb-2">
-                            Select {mentionSuggestion.type}:
+                          <div className="text-xs text-gray-500 mb-2 flex items-center gap-2">
+                            <span>Select {mentionSuggestion.type}:</span>
+                            <span className="text-gray-400">({filteredEntities.length} found)</span>
+                          </div>
+                          
+                          {/* Search input */}
+                          <div className="relative mb-2">
+                            <input
+                              type="text"
+                              placeholder={`Search ${mentionSuggestion.type}s...`}
+                              value={searchQuery}
+                              onChange={(e) => {
+                                setSearchQuery(e.target.value);
+                                // Filter entities based on search
+                                const filtered = entities
+                                  .filter(entity => entity.type === mentionSuggestion.type)
+                                  .filter(entity => 
+                                    entity.name.toLowerCase().includes(e.target.value.toLowerCase()) ||
+                                    entity.description?.toLowerCase().includes(e.target.value.toLowerCase())
+                                  )
+                                  .slice(0, 10);
+                                setFilteredEntities(filtered);
+                              }}
+                              className="w-full px-2 py-1 text-xs border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-quickcart-500"
+                            />
+                            <Search className="absolute right-2 top-1/2 transform -translate-y-1/2 h-3 w-3 text-gray-400" />
                           </div>
                           
                           {filteredEntities.length > 0 ? (
@@ -466,7 +497,7 @@ export const ChatPage: React.FC = () => {
                             </div>
                           ) : (
                             <div className="px-3 py-2 text-sm text-gray-500">
-                              {mentionSuggestion.query ? `No ${mentionSuggestion.type}s match "${mentionSuggestion.query}"` : 'Loading...'}
+                              {searchQuery ? `No ${mentionSuggestion.type}s match "${searchQuery}"` : 'Loading...'}
                             </div>
                           )}
                         </div>
