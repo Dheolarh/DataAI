@@ -63,6 +63,13 @@ export const ChatPage: React.FC = () => {
         supabase.from('admins').select('id, name, email, role').limit(100)
       ]);
 
+      console.log('Loaded entities:', {
+        products: products.data?.length || 0,
+        companies: companies.data?.length || 0,
+        categories: categories.data?.length || 0,
+        admins: admins.data?.length || 0
+      });
+
       const allEntities: DatabaseEntity[] = [
         ...(products.data || []).map(p => ({
           id: p.id,
@@ -90,6 +97,8 @@ export const ChatPage: React.FC = () => {
         }))
       ];
 
+      console.log('All entities:', allEntities);
+      console.log('Admin entities:', allEntities.filter(e => e.type === 'admin'));
       setEntities(allEntities);
     } catch (error) {
       console.error('Failed to load entities:', error);
@@ -137,6 +146,7 @@ export const ChatPage: React.FC = () => {
               const filtered = entities
                 .filter(entity => entity.type === matchingType)
                 .slice(0, 10);
+              console.log(`Matched type ${matchingType}, found ${filtered.length} entities:`, filtered);
               setFilteredEntities(filtered);
               setSearchQuery('');
             } else {
@@ -161,6 +171,7 @@ export const ChatPage: React.FC = () => {
               const filtered = entities
                 .filter(entity => entity.type === type)
                 .slice(0, 10);
+              console.log(`Typing @${type}:, found ${filtered.length} entities:`, filtered);
               setFilteredEntities(filtered);
             } else {
               // Filter entities by type and search query
@@ -171,6 +182,7 @@ export const ChatPage: React.FC = () => {
                   entity.description?.toLowerCase().includes(query.toLowerCase())
                 )
                 .slice(0, 10);
+              console.log(`Searching @${type}:${query}, found ${filtered.length} entities:`, filtered);
               setFilteredEntities(filtered);
             }
             setShowMentionPopup(true);
@@ -216,6 +228,7 @@ export const ChatPage: React.FC = () => {
       .filter(entity => entity.type === type)
       .slice(0, 10);
     
+    console.log(`Selecting ${type}, found ${filtered.length} entities:`, filtered);
     setFilteredEntities(filtered);
     inputRef.current?.focus();
   };
@@ -429,7 +442,7 @@ export const ChatPage: React.FC = () => {
                   
                   {/* Mention Popup */}
                   {showMentionPopup && (
-                    <div className="absolute z-50 top-full left-0 right-0 mt-1 bg-white border border-gray-200 rounded-md shadow-lg max-h-64 overflow-y-auto">
+                    <div className="absolute z-50 bottom-full left-0 right-0 mb-1 bg-white border border-gray-200 rounded-md shadow-lg max-h-64 overflow-y-auto">
                       {!mentionSuggestion?.type ? (
                         // Show entity types when just @ is typed
                         <div className="p-2">
