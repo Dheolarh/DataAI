@@ -136,76 +136,99 @@ class DynamicQueryEngine {
   }
 
   async generateAndExecute(query: string, _history: ChatMessage[]): Promise<string> {
+    // First, check if the query requires specific parameters that aren't provided
+    const parameterCheckPrompt = `
+      Analyze this user query to see if it requires specific parameters that aren't provided:
+      
+      Query: "${query}"
+      
+      Examples that need more information:
+      - "Add a product" -> needs product details
+      - "Update product X" -> needs what to update
+      - "Delete company" -> needs which company
+      - "Show sales for" -> needs time period or location
+      
+      Examples that are complete:
+      - "Show all products"
+      - "List companies from USA"
+      - "What are top selling products"
+      
+      If this query needs more specific information, respond with "NEEDS_INFO:" followed by what information is needed.
+      If the query is complete, respond with "COMPLETE".
+    `;
+
+    try {
+      const paramCheck = await this.model.generateContent(parameterCheckPrompt);
+      const paramResponse = paramCheck.response.text().trim();
+      
+      if (paramResponse.startsWith('NEEDS_INFO:')) {
+        const neededInfo = paramResponse.replace('NEEDS_INFO:', '').trim();
+        return `I'd be happy to help you with that! To proceed, I need some additional information:\n\n${neededInfo}\n\nCould you please provide these details?`;
+      }
+    } catch (error) {
+      console.error('Parameter check failed:', error);
+      // Continue with normal processing
+    }
+
+    // Generate and execute the query
     const schema = await this.getSchema();
     const prompt = `
-      You are a hyper-intelligent data analyst AI. Your ONLY task is to answer the user's question by generating a valid PostgreSQL query against the provided database schema. You must follow all rules strictly.
-
+      You are a business data analyst. Generate a PostgreSQL query to answer the user's question.
+      
       DATABASE SCHEMA:
-      ---
       ${schema}
-      ---
-
-      USER'S QUESTION: "${query}"
-
-      **MANDATORY RULES:**
-      1.  **NEVER** use a table or column that is NOT explicitly listed in the DATABASE SCHEMA. Do not guess.
-      2.  **EXPLICIT MAPPINGS**:
-          - "logins" or "logged in" refers to the \`access_logs\` table.
-          - "items", "goods", or "best selling" refers to the \`products\` table.
-          - "sales" or "revenue" refers to the \`transactions\` table.
-          - The primary key for \`products\` is \`id\`.
-      3.  **JOINING**: Use the "Relationships" info from the schema to construct correct JOIN clauses. Example: to join products and transactions, use \`products.id = transactions.product_id\`.
-      4.  **DATES**: For "last week", use: \`transaction_time >= date_trunc('week', NOW() - interval '1 week') AND transaction_time < date_trunc('week', NOW())\`.
-      5.  **NO SEMICOLON**: You MUST NOT include a semicolon (;) at the end of your SQL query.
-      6.  **LIMIT**: Always add a \`LIMIT 20\` to your query unless otherwise specified by the user.
-
-      **RESPONSE FORMAT (Strict JSON):**
-      Your output MUST be a single, valid JSON object with two keys: "thought_process" and "sql".
-
-      **Thought Process Steps (Must be followed):**
-      1.  **Analyze Request**: State what the user wants.
-      2.  **Map to Schema**: Identify the exact tables, columns, and joins needed from the schema.
-      3.  **Construct SQL**: Write the query.
-      4.  **Validate SQL**: Critically review the generated SQL. Confirm that every table and column exists in the schema and that all JOIN conditions are correct based on the 'Relationships' section. This is the most important step.
-
-      Return ONLY the JSON object.
+      
+      USER QUESTION: "${query}"
+      
+      RULES:
+      1. Only use tables and columns from the schema above
+      2. No INSERT, UPDATE, DELETE - only SELECT queries
+      3. Add LIMIT 20 unless user specifies otherwise
+      4. For "companies from USA" use WHERE country = 'USA'
+      5. For "top selling products" join products and transactions
+      6. Return only the SQL query, no explanation
     `;
 
     try {
       const result = await this.model.generateContent(prompt);
-      const responseTextCleaned = result.response.text().replace(/```json/g, '').replace(/```/g, '').trim();
-      const responseJson = JSON.parse(responseTextCleaned);
-
-      const thoughtProcess = responseJson.thought_process;
-      const sql = (responseJson.sql || '').trim().replace(/;$/, '');
-
-      if (!sql) {
-        return "I'm sorry, I was unable to construct a query for that request. Please try rephrasing.";
+      const sqlQuery = result.response.text().trim().replace(/```sql/g, '').replace(/```/g, '').trim();
+      
+      // Execute the query
+      const { data, error } = await this.supabase.rpc('execute_sql', { query: sqlQuery });
+      
+      if (error) {
+        console.error('SQL execution error:', error);
+        return "I apologize, but I encountered an error while retrieving the data. The query might not be compatible with your database structure. Could you try rephrasing your question?";
       }
 
-      const { data: queryData, error: queryError } = await this.supabase.rpc('execute_sql', { query: sql });
-
-      let responseText = `🧠 **Thought Process:**\n${thoughtProcess}\n\n`;
-      responseText += `💻 **Executed SQL:**\n\`\`\`sql\n${sql}\n\`\`\`\n\n`;
-
-      if (queryError || queryData?.error) {
-        const dbError = queryError ? queryError.message : queryData.error;
-        responseText += `❌ **SQL Error:** ${dbError}\n\nThis usually means the generated query was invalid. I'm still learning the schema!`;
-      } else {
-        const resultData = Array.isArray(queryData) ? queryData : [];
-        responseText += `📊 **Returned ${resultData.length} rows:**\n\n`;
-        if (resultData.length > 0) {
-          responseText += "```json\n" + JSON.stringify(resultData, null, 2) + "\n```";
-        } else {
-          responseText += "The query ran successfully, but returned no results.";
-        }
+      // Format the response naturally
+      if (!data || data.length === 0) {
+        return "I searched through the database but didn't find any results matching your query. This might mean:\n\n• The data doesn't exist yet\n• The search criteria were too specific\n• There might be a different way to phrase your question\n\nWould you like to try a different approach?";
       }
-      return responseText;
 
-    } catch (e) {
-      console.error("Query generation/execution failed:", e);
-      const errorMessage = e instanceof Error ? e.message : 'Unknown error';
-      return `I'm sorry, I encountered an error while trying to answer your question. The AI model may have returned an invalid response. Details: ${errorMessage}`;
+      // Generate a natural language response
+      const responsePrompt = `
+        The user asked: "${query}"
+        
+        I executed a database query and got these results:
+        ${JSON.stringify(data.slice(0, 5), null, 2)}
+        
+        Create a natural, conversational response that:
+        1. Directly answers their question
+        2. Presents the data in a friendly way
+        3. Uses bullet points or tables if helpful
+        4. Mentions if there are more results than shown
+        5. Is concise but informative
+        
+        Don't mention SQL, databases, or technical details. Just answer like a helpful business assistant.
+      `;
+
+      const finalResponse = await this.model.generateContent(responsePrompt);
+      return finalResponse.response.text().trim();
+
+    } catch (error) {
+      console.error('Query generation/execution error:', error);
+      return "I'm having trouble processing your request right now. Could you try rephrasing your question or asking something else?";
     }
   }
 }
@@ -260,8 +283,11 @@ Deno.serve(async (req) => {
 
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-    const errorResponse = `❌ **Critical Error:** ${errorMessage}\n\n`;
-    return new Response(JSON.stringify({ response: errorResponse }), {
+    const errorResponse = `I'm sorry, I encountered an error: ${errorMessage}`;
+    return new Response(JSON.stringify({ 
+      content: errorResponse,
+      type: 'error'
+    }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       status: 500
     });

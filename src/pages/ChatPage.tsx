@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Card, CardContent } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
-import { Bot, User, Send, Sparkles, RefreshCw, Search, BarChart, Code, Brain, ChevronDown } from 'lucide-react';
+import { Bot, User, Send, Sparkles, RefreshCw } from 'lucide-react';
 import { useAuthContext } from '../hooks/AuthContext';
 import { supabase, type ChatMessage } from '../lib/supabase';
 import ReactMarkdown from 'react-markdown';
@@ -21,7 +21,6 @@ export const ChatPage: React.FC = () => {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inputValue, setInputValue] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set());
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // Scroll to bottom
@@ -66,10 +65,10 @@ export const ChatPage: React.FC = () => {
       const functionUsed = data?.functionUsed;
       const confidence = data?.confidence;
 
-      // Add type indicator to content for better UX
+      // Add simple type indicator to content for better UX
       let displayContent = responseContent;
       if (responseType === 'data' && functionUsed) {
-        displayContent = `💻 **Function Used:** ${functionUsed}${confidence ? ` (${confidence}% confidence)` : ''}\n\n${responseContent}`;
+        displayContent = `� ${responseContent}`;
       } else if (responseType === 'conversational') {
         displayContent = `💬 ${responseContent}`;
       }
@@ -99,101 +98,9 @@ export const ChatPage: React.FC = () => {
     }
   };
 
-  // Toggle section expansion
-  const toggleExpand = (id: string) => {
-    setExpandedItems(prev => {
-      const newSet = new Set(prev);
-      if (newSet.has(id)) newSet.delete(id);
-      else newSet.add(id);
-      return newSet;
-    });
-  };
-
-  // Render message content with expandable sections
+  // Render message content simply
   const renderMessageContent = (message: ChatMessage) => {
-    if (message.role === 'user') {
-      return <ReactMarkdown className="prose max-w-none">{message.content}</ReactMarkdown>;
-    }
-
-    // Split assistant message into sections
-    const sections: string[] = message.content.split(/(🔍 |📊 |💻 |🧠 )/g).filter(Boolean) as string[];
-    let currentSection = '';
-    const output: string[] = [];
-    
-    for (const section of sections) {
-      if (['🔍', '📊', '💻', '🧠'].includes(section.trim())) {
-        if (currentSection) {
-          output.push(currentSection);
-          currentSection = '';
-        }
-      }
-      currentSection += section;
-    }
-    
-    // Add last section
-    if (currentSection) output.push(currentSection);
-    
-    return (
-      <div>
-        {output.map((section, index) => {
-          const type = section.match(/^(🔍 |📊 |💻 |🧠 )/)?.[0]?.trim() || 'text';
-          const content = section.replace(/^(🔍 |📊 |💻 |🧠 )/, '');
-          const sectionId = `${message.id}-${index}`;
-          const isExpanded = expandedItems.has(sectionId);
-          
-          return (
-            <div key={index} className="mb-3">
-              {type === 'text' ? (
-                <ReactMarkdown className="prose max-w-none">{section}</ReactMarkdown>
-              ) : (
-                <>
-                  <div 
-                    className="flex items-center cursor-pointer font-medium text-gray-700"
-                    onClick={() => toggleExpand(sectionId)}
-                  >
-                    <span className="mr-2">
-                      {type === '🔍' && <Search className="h-4 w-4 inline" />}
-                      {type === '📊' && <BarChart className="h-4 w-4 inline" />}
-                      {type === '💻' && <Code className="h-4 w-4 inline" />}
-                      {type === '🧠' && <Brain className="h-4 w-4 inline" />}
-                    </span>
-                    {type === '🔍' && 'Query'}
-                    {type === '📊' && 'Results'}
-                    {type === '💻' && 'SQL'}
-                    {type === '🧠' && 'Mapping'}
-                    <ChevronDown 
-                      className={`h-4 w-4 ml-2 transition-transform ${isExpanded ? 'rotate-180' : ''}`} 
-                    />
-                  </div>
-                  
-                  {isExpanded && (
-                    <div className="mt-2 ml-6">
-                      {type === '📊' ? (
-                        <pre className="bg-gray-50 p-3 rounded-md text-sm overflow-x-auto">
-                          {content}
-                        </pre>
-                      ) : type === '💻' ? (
-                        <pre className="bg-gray-800 text-gray-100 p-3 rounded-md text-sm overflow-x-auto">
-                          {content}
-                        </pre>
-                      ) : type === '🧠' ? (
-                        <pre className="bg-blue-50 p-3 rounded-md text-sm overflow-x-auto">
-                          {content}
-                        </pre>
-                      ) : (
-                        <ReactMarkdown className="prose prose-sm max-w-none">
-                          {content}
-                        </ReactMarkdown>
-                      )}
-                    </div>
-                  )}
-                </>
-              )}
-            </div>
-          );
-        })}
-      </div>
-    );
+    return <ReactMarkdown className="prose max-w-none">{message.content}</ReactMarkdown>;
   };
 
   // Handle enter key
