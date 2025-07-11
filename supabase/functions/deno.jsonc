@@ -3,7 +3,7 @@
     "lib": ["deno.ns", "dom"]
   },
   "imports": {
-    "@supabase/supabase-js": "npm:@supabase/supabase-js@2",
-    "@google/generative-ai": "npm:@google/generative-ai@0.15.0"
+    "@supabase/supabase-js": "https://esm.sh/@supabase/supabase-js@2.39.3",
+    "@google/generative-ai": "https://esm.sh/@google/generative-ai@0.15.0"
   }
 }
