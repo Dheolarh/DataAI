@@ -71,12 +71,13 @@ cp .env.example .env
 # Add your Supabase credentials
 VITE_SUPABASE_URL=your_supabase_url
 VITE_SUPABASE_ANON_KEY=your_supabase_anon_key
-GEMINI_API_KEY=AIzaSyD1Euh93DJzlZXJjYC_9t8s1PCCBT4Zt88
+GEMINI_API_KEY=your_google_api_key
 
 # Google Cloud
 GOOGLE_PROJECT_ID=your_google_poject_ID
 GOOGLE_LOCATION=your_gcp_project_region
 
+# Weaviate embedding system
 WEAVIATE_URL=your_weviate_rest_endpoint_url
 WEAVIATE_API_KEY=your_weviate_api_key
 ```
