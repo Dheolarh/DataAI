@@ -21,29 +21,57 @@ interface TableInfo {
 class IntentClassifier {
   private model = genAI.getGenerativeModel({ model: 'gemini-1.5-pro-latest' });
 
-  async classify(query: string, history: ChatMessage[]): Promise<'conversational' | 'data_query'> {
+  async classify(query: string, _history: ChatMessage[]): Promise<'conversational' | 'data_query'> {
     const prompt = `
       You are an intent classifier for a business AI assistant.
       Your task is to determine if the user's query is a general conversation or a request for data from a database.
 
-      - **Conversational**: Greetings, thank you, how are you, general questions not related to business data.
-      - **Data Query**: Questions about sales, products, customers, revenue, inventory, logins etc.
+      **Data Query Examples:**
+      - "What are our top selling products?"
+      - "Show me recent transactions"
+      - "List all companies from USA"
+      - "What products are out of stock?"
+      - "What is our total sales this month?"
+      - "How many customers do we have?"
+      - "What are our revenue numbers?"
+      - "Show me all admins"
+      - "List products in category X"
 
-      Conversation History (for context):
-      ${JSON.stringify(history.slice(-4), null, 2)}
+      **Conversational Examples:**
+      - "Hello", "Hi", "How are you?"
+      - "Thank you", "Thanks"
+      - "What can you do?", "Help me"
+      - "Good morning", "Good bye"
+      - "How do you work?", "Who created you?"
 
       User Query: "${query}"
 
-      Based on the query and history, is this 'conversational' or a 'data_query'?
-      Return ONLY the classification.
+      Based on the query, is this 'conversational' or 'data_query'?
+      Return ONLY the classification word.
     `;
     try {
       const result = await this.model.generateContent(prompt);
       const classification = result.response.text().trim().toLowerCase();
-      if (classification.includes('data_query')) return 'data_query';
+      
+      // More aggressive data query detection
+      if (classification.includes('data_query') || classification.includes('data')) {
+        return 'data_query';
+      }
+      
+      // Check if query contains data-related keywords
+      const dataKeywords = ['show', 'list', 'what', 'how many', 'total', 'count', 'products', 'sales', 'revenue', 'transactions', 'companies', 'customers', 'admins', 'stock', 'inventory'];
+      const queryLower = query.toLowerCase();
+      
+      for (const keyword of dataKeywords) {
+        if (queryLower.includes(keyword)) {
+          return 'data_query';
+        }
+      }
+      
       return 'conversational';
     } catch (e) {
       console.error("Intent classification failed:", e);
+      // Default to data_query for better UX
       return 'data_query';
     }
   }
@@ -189,26 +217,44 @@ Deno.serve(async (req) => {
   }
 
   try {
-    const { query, history } = await req.json();
+    const { message, query, history, conversationId } = await req.json();
+    
+    // Support both 'message' and 'query' for backward compatibility
+    const userQuery = message || query;
+    
+    if (!userQuery) {
+      throw new Error('No message or query provided');
+    }
+
     const supabaseAdmin = createClient(
       Deno.env.get('SUPABASE_URL')!,
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
     );
 
     const classifier = new IntentClassifier();
-    const intent = await classifier.classify(query, history);
+    const intent = await classifier.classify(userQuery, history || []);
 
     let responseText = "";
+    let responseType = "";
+    let functionUsed = "";
 
     if (intent === 'conversational') {
       const responder = new ConversationalResponder();
-      responseText = await responder.generateResponse(query, history);
+      responseText = await responder.generateResponse(userQuery, history || []);
+      responseType = 'conversational';
     } else {
       const engine = new DynamicQueryEngine(supabaseAdmin);
-      responseText = await engine.generateAndExecute(query, history);
+      responseText = await engine.generateAndExecute(userQuery, history || []);
+      responseType = 'data';
+      functionUsed = 'dynamic_sql_query';
     }
 
-    return new Response(JSON.stringify({ response: responseText }), {
+    return new Response(JSON.stringify({ 
+      content: responseText,
+      type: responseType,
+      functionUsed: functionUsed || undefined,
+      conversationId: conversationId || undefined
+    }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' }
     });
 

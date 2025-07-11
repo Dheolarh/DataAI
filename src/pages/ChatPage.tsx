@@ -8,10 +8,12 @@ import { supabase, type ChatMessage } from '../lib/supabase';
 import ReactMarkdown from 'react-markdown';
 
 const QUICK_ACTIONS = [
-  "What were our top selling items last week?",
-  "Show me current logged-in users",
-  "What products are low in stock?",
-  "Revenue by product category"
+  "What are our top selling products?",
+  "Show me recent transactions",
+  "What products are out of stock?",
+  "What is our total sales this month?",
+  "List all companies from USA",
+  "What products need restocking?"
 ];
 
 export const ChatPage: React.FC = () => {
@@ -47,7 +49,8 @@ export const ChatPage: React.FC = () => {
     try {
       const { data, error } = await supabase.functions.invoke('ai-chat', {
         body: { 
-          query, 
+          message: query,
+          conversationId: 'session_' + Date.now(),
           history: messages.map(m => ({
             role: m.role === 'assistant' ? 'model' : 'user',
             parts: [{ text: m.content }]
@@ -57,22 +60,37 @@ export const ChatPage: React.FC = () => {
 
       if (error) throw new Error(error.message);
 
+      // Extract response details
+      const responseContent = data?.content || data?.response || "Sorry, I couldn't generate a response.";
+      const responseType = data?.type || 'unknown';
+      const functionUsed = data?.functionUsed;
+      const confidence = data?.confidence;
+
+      // Add type indicator to content for better UX
+      let displayContent = responseContent;
+      if (responseType === 'data' && functionUsed) {
+        displayContent = `💻 **Function Used:** ${functionUsed}${confidence ? ` (${confidence}% confidence)` : ''}\n\n${responseContent}`;
+      } else if (responseType === 'conversational') {
+        displayContent = `💬 ${responseContent}`;
+      }
+
       const assistantMessage: ChatMessage = {
         id: (Date.now() + 1).toString(),
         session_id: 'local_session',
         role: 'assistant',
-        content: data?.response || "Sorry, I couldn't generate a response.",
+        content: displayContent,
         created_at: new Date().toISOString()
       };
 
       setMessages(prev => [...prev, assistantMessage]);
 
     } catch (error) {
+      console.error('Chat error:', error);
       const errorMsg: ChatMessage = {
         id: (Date.now() + 1).toString(),
         session_id: 'local_session',
         role: 'assistant',
-        content: "I'm sorry, I encountered an error. Please try again.",
+        content: "❌ I'm sorry, I encountered an error. Please try again.",
         created_at: new Date().toISOString()
       };
       setMessages(prev => [...prev, errorMsg]);
