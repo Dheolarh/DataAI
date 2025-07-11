@@ -103,58 +103,71 @@ export const ChatPage: React.FC = () => {
 
     // Check for @ mentions
     const atIndex = value.lastIndexOf('@');
-    if (atIndex !== -1 && atIndex === value.length - 1) {
-      // Just typed @, show mention types
-      setMentionSuggestion({
-        type: 'product',
-        position: atIndex,
-        query: ''
-      });
-      setShowMentionPopup(true);
-      setSearchQuery('');
-      setFilteredEntities([]);
-    } else if (atIndex !== -1) {
-      // Already typing after @
+    if (atIndex !== -1) {
       const afterAt = value.substring(atIndex + 1);
-      const parts = afterAt.split(':');
       
-      if (parts.length === 1) {
-        // Still typing the type (e.g., @prod)
-        const types = ['product', 'company', 'category', 'admin'];
-        const matchingType = types.find(t => t.startsWith(parts[0].toLowerCase()));
+      if (afterAt === '') {
+        // Just typed @, show mention types
+        setMentionSuggestion({
+          type: 'product',
+          position: atIndex,
+          query: ''
+        });
+        setShowMentionPopup(true);
+        setSearchQuery('');
+        setFilteredEntities([]);
+      } else {
+        const parts = afterAt.split(':');
         
-        if (matchingType && parts[0].length > 0) {
-          setMentionSuggestion({
-            type: matchingType as any,
-            position: atIndex,
-            query: parts[0]
-          });
-          setShowMentionPopup(true);
-        }
-      } else if (parts.length === 2 && parts[0]) {
-        // Typing entity name (e.g., @product:)
-        const type = parts[0].toLowerCase();
-        const query = parts[1];
-        
-        if (['product', 'company', 'category', 'admin'].includes(type)) {
-          setMentionSuggestion({
-            type: type as any,
-            position: atIndex,
-            query: query
-          });
-          setSearchQuery(query);
+        if (parts.length === 1) {
+          // Still typing the type (e.g., @prod)
+          const types = ['product', 'company', 'category', 'admin'];
+          const matchingType = types.find(t => t.startsWith(parts[0].toLowerCase()));
           
-          // Filter entities by type and search query
-          const filtered = entities
-            .filter(entity => entity.type === type)
-            .filter(entity => 
-              entity.name.toLowerCase().includes(query.toLowerCase()) ||
-              entity.description?.toLowerCase().includes(query.toLowerCase())
-            )
-            .slice(0, 10);
+          if (matchingType) {
+            setMentionSuggestion({
+              type: matchingType as any,
+              position: atIndex,
+              query: parts[0]
+            });
+            setShowMentionPopup(true);
+            
+            // If it's a complete type like "product", show all entities of that type
+            if (matchingType === parts[0].toLowerCase()) {
+              const filtered = entities
+                .filter(entity => entity.type === matchingType)
+                .slice(0, 10);
+              setFilteredEntities(filtered);
+            } else {
+              setFilteredEntities([]);
+            }
+          }
+        } else if (parts.length >= 2 && parts[0]) {
+          // Typing entity name (e.g., @product: or @product:iPhone)
+          const type = parts[0].toLowerCase();
+          const query = parts.slice(1).join(':'); // Handle cases with : in product names
           
-          setFilteredEntities(filtered);
-          setShowMentionPopup(true);
+          if (['product', 'company', 'category', 'admin'].includes(type)) {
+            setMentionSuggestion({
+              type: type as any,
+              position: atIndex,
+              query: query
+            });
+            setSearchQuery(query);
+            
+            // Filter entities by type and search query
+            const filtered = entities
+              .filter(entity => entity.type === type)
+              .filter(entity => {
+                if (query.trim() === '') return true; // Show all if no query
+                return entity.name.toLowerCase().includes(query.toLowerCase()) ||
+                       entity.description?.toLowerCase().includes(query.toLowerCase());
+              })
+              .slice(0, 10);
+            
+            setFilteredEntities(filtered);
+            setShowMentionPopup(true);
+          }
         }
       }
     } else {
@@ -409,8 +422,8 @@ export const ChatPage: React.FC = () => {
                   
                   {/* Mention Popup */}
                   {showMentionPopup && (
-                    <div className="absolute z-50 top-full left-0 right-0 mt-1 bg-white border border-gray-200 rounded-md shadow-lg max-h-64 overflow-y-auto">
-                      {!mentionSuggestion?.type || mentionSuggestion.query ? (
+                    <div className="absolute z-50 bottom-full left-0 right-0 mb-1 bg-white border border-gray-200 rounded-md shadow-lg max-h-64 overflow-y-auto">
+                      {!mentionSuggestion?.type ? (
                         // Show entity types when just @ is typed
                         <div className="p-2">
                           <div className="text-xs text-gray-500 mb-2">Select entity type:</div>
@@ -447,9 +460,13 @@ export const ChatPage: React.FC = () => {
                                 )}
                               </button>
                             ))
+                          ) : mentionSuggestion.type && entities.filter(e => e.type === mentionSuggestion.type).length === 0 ? (
+                            <div className="px-3 py-2 text-sm text-gray-500">
+                              No {mentionSuggestion.type}s found in database
+                            </div>
                           ) : (
                             <div className="px-3 py-2 text-sm text-gray-500">
-                              No {mentionSuggestion.type}s found
+                              {mentionSuggestion.query ? `No ${mentionSuggestion.type}s match "${mentionSuggestion.query}"` : 'Loading...'}
                             </div>
                           )}
                         </div>

@@ -201,24 +201,48 @@ class DynamicQueryEngine {
       : '';
     
     const parameterCheckPrompt = `
-      Analyze this user query to see if it requires specific parameters that aren't provided:
+      Analyze this user query to determine if it's a modification request that needs specific database fields:
       
       Query: "${query}"${mentionsInfo}
       
-      Examples that need more information:
-      - "Add a product" -> needs product details
-      - "Update product X" -> needs what to update
-      - "Delete company" -> needs which company
-      - "Show sales for" -> needs time period or location
+      For modification requests, provide the exact database fields needed:
       
-      Examples that are complete:
-      - "Show all products"
-      - "List companies from USA"
-      - "What are top selling products"
-      - "Show information about @product:iPhone" -> has specific product mention
+      **Product Operations:**
+      - Add/Create/Insert product: needs name, sku, price (selling_price), cost_price, stock, category_id, company_id
+      - Update product: needs product identifier + fields to update
+      - Delete product: needs product identifier
       
-      If this query needs more specific information, respond with "NEEDS_INFO:" followed by what information is needed.
-      If the query is complete, respond with "COMPLETE".
+      **Company Operations:**
+      - Add company: needs name, country, contact_info
+      - Update company: needs company identifier + fields to update
+      - Delete company: needs company identifier
+      
+      **Category Operations:**
+      - Add category: needs name, description
+      - Update category: needs category identifier + fields to update
+      - Delete category: needs category identifier
+      
+      **Admin Operations:**
+      - Add admin: needs name, email, role
+      - Update admin: needs admin identifier + fields to update
+      - Delete admin: needs admin identifier
+      
+      **Transaction Operations:**
+      - Add transaction: needs product_id, quantity, location
+      - Note: Transactions are typically auto-generated, manual creation rare
+      
+      **Read-Only Tables:**
+      - access_logs: Cannot be modified (read-only audit trail)
+      
+      Examples:
+      - "Add a product" -> NEEDS_INFO: Please provide the following product details: name, sku, selling_price, cost_price, stock, category_id, company_id
+      - "Update product iPhone" -> NEEDS_INFO: Please specify which fields to update for iPhone and their new values
+      - "Show all products" -> COMPLETE (read operation)
+      - "Delete access logs" -> CANNOT_MODIFY: Access logs are read-only audit trails and cannot be modified
+      
+      If the query is a modification that needs specific database fields, respond with "NEEDS_INFO:" followed by the exact fields needed.
+      If the query is complete or is a read operation, respond with "COMPLETE".
+      If the query tries to modify a read-only table, respond with "CANNOT_MODIFY:" followed by explanation.
     `;
 
     try {
@@ -227,7 +251,12 @@ class DynamicQueryEngine {
 
       if (paramResponse.startsWith('NEEDS_INFO:')) {
         const neededInfo = paramResponse.replace('NEEDS_INFO:', '').trim();
-        return `I'd be happy to help you with that! To proceed, I need some additional information:\n\n${neededInfo}\n\nCould you please provide these details?`;
+        return `I'd be happy to help you with that! To proceed, I need the following information:\n\n${neededInfo}\n\nPlease provide these details and I'll process your request.`;
+      }
+      
+      if (paramResponse.startsWith('CANNOT_MODIFY:')) {
+        const reason = paramResponse.replace('CANNOT_MODIFY:', '').trim();
+        return `I'm sorry, but I cannot perform this operation. ${reason}`;
       }
     } catch (error) {
       console.error('Parameter check failed:', error);
@@ -266,7 +295,9 @@ class DynamicQueryEngine {
           return "I didn't find any results for your query. The database might be empty or the query needs adjustment.";
         }
         
-        return `Here are the results for "${query}":\n\n${JSON.stringify(data.slice(0, 5), null, 2)}`;
+        // Ensure data is an array before slicing
+        const results = Array.isArray(data) ? data : [data];
+        return `Here are the results for "${query}":\n\n${JSON.stringify(results.slice(0, 5), null, 2)}`;
       } catch (error) {
         console.error('Simple query execution failed:', error);
         // Fall through to AI generation
@@ -315,13 +346,13 @@ class DynamicQueryEngine {
         The user asked: "${query}"
         
         I executed a database query and got these results:
-        ${JSON.stringify(data.slice(0, 5), null, 2)}
+        ${JSON.stringify(Array.isArray(data) ? data.slice(0, 5) : [data], null, 2)}
         
         Create a natural, conversational response that:
         1. Directly answers their question
         2. Presents the data in a friendly way
         3. Uses bullet points or tables if helpful
-        4. Mentions if there are more results than shown
+        4. Mentions if there are more results than shown (total results: ${Array.isArray(data) ? data.length : 1})
         5. Is concise but informative
         
         Don't mention SQL, databases, or technical details. Just answer like a helpful business assistant.
