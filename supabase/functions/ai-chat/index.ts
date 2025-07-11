@@ -52,22 +52,22 @@ class IntentClassifier {
     try {
       const result = await this.model.generateContent(prompt);
       const classification = result.response.text().trim().toLowerCase();
-      
+
       // More aggressive data query detection
       if (classification.includes('data_query') || classification.includes('data')) {
         return 'data_query';
       }
-      
+
       // Check if query contains data-related keywords
       const dataKeywords = ['show', 'list', 'what', 'how many', 'total', 'count', 'products', 'sales', 'revenue', 'transactions', 'companies', 'customers', 'admins', 'stock', 'inventory'];
       const queryLower = query.toLowerCase();
-      
+
       for (const keyword of dataKeywords) {
         if (queryLower.includes(keyword)) {
           return 'data_query';
         }
       }
-      
+
       return 'conversational';
     } catch (e) {
       console.error("Intent classification failed:", e);
@@ -116,31 +116,94 @@ class DynamicQueryEngine {
     ]
   });
 
-  constructor(private supabase: SupabaseClient) {}
+  constructor(private supabase: SupabaseClient) { }
 
   private async getSchema(): Promise<string> {
-    const { data, error } = await this.supabase.rpc('get_schema_info');
-    if (error) {
-      console.error('Schema analysis failed:', error);
-      return 'Database schema information unavailable';
-    }
-    return data.map((table: TableInfo) => {
-        let tableInfo = `Table \`${table.table_name}\`:\n`;
-        if (table.description) tableInfo += `  - Description: ${table.description}\n`;
-        tableInfo += `  - Columns: ${table.columns.map((c) => `${c.column_name} (${c.data_type})`).join(', ')}\n`;
-        if (table.relationships && table.relationships.length > 0) {
-            tableInfo += `  - Relationships: ${table.relationships.map((r) => `\`${r.from_column}\` -> \`${r.to_table}\`.\`${r.to_column}\``).join(', ')}\n`;
+    try {
+      // Simple schema discovery using information_schema
+      const { data, error } = await this.supabase.rpc('execute_sql', {
+        query: `
+          SELECT 
+            table_name,
+            column_name,
+            data_type,
+            is_nullable
+          FROM information_schema.columns 
+          WHERE table_schema = 'public' 
+          AND table_name IN ('products', 'transactions', 'companies', 'categories', 'admins', 'access_logs')
+          ORDER BY table_name, ordinal_position
+        `
+      });
+
+      if (error) {
+        console.error('Schema discovery failed:', error);
+        return `
+          Tables available:
+          - products: id, name, sku, price, stock, category_id, company_id
+          - transactions: id, product_id, quantity, transaction_time, location
+          - companies: id, name, country, contact_info
+          - categories: id, name, description
+          - admins: id, name, email, role
+          - access_logs: id, admin_id, action, timestamp
+        `;
+      }
+
+      if (!data || data.length === 0) {
+        return `
+          Tables available:
+          - products: id, name, sku, price, stock, category_id, company_id
+          - transactions: id, product_id, quantity, transaction_time, location
+          - companies: id, name, country, contact_info
+          - categories: id, name, description
+          - admins: id, name, email, role
+          - access_logs: id, admin_id, action, timestamp
+        `;
+      }
+
+      // Group columns by table
+      const tableMap = new Map<string, string[]>();
+      for (const row of data) {
+        const tableName = row.table_name;
+        const columnInfo = `${row.column_name} (${row.data_type})`;
+        
+        if (!tableMap.has(tableName)) {
+          tableMap.set(tableName, []);
         }
-        return tableInfo;
-    }).join('\n');
+        tableMap.get(tableName)!.push(columnInfo);
+      }
+
+      // Format schema
+      let schema = 'Database Schema:\n';
+      for (const [tableName, columns] of tableMap) {
+        schema += `\nTable: ${tableName}\n`;
+        schema += `Columns: ${columns.join(', ')}\n`;
+      }
+
+      return schema;
+    } catch (error) {
+      console.error('Schema discovery error:', error);
+      return `
+        Tables available:
+        - products: id, name, sku, price, stock, category_id, company_id
+        - transactions: id, product_id, quantity, transaction_time, location
+        - companies: id, name, country, contact_info
+        - categories: id, name, description
+        - admins: id, name, email, role
+        - access_logs: id, admin_id, action, timestamp
+      `;
+    }
   }
 
-  async generateAndExecute(query: string, _history: ChatMessage[]): Promise<string> {
+  async generateAndExecute(query: string, _history: ChatMessage[], mentions?: Array<{type: string, name: string, id?: string}>): Promise<string> {
     // First, check if the query requires specific parameters that aren't provided
+    const mentionsInfo = mentions && mentions.length > 0 
+      ? `\nMentioned entities: ${mentions.map(m => `${m.type}: ${m.name}${m.id ? ` (ID: ${m.id})` : ''}`).join(', ')}`
+      : '';
+    
     const parameterCheckPrompt = `
       Analyze this user query to see if it requires specific parameters that aren't provided:
       
-      Query: "${query}"
+      Query: "${query}"${mentionsInfo}
       
       Examples that need more information:
       - "Add a product" -> needs product details
@@ -152,6 +215,7 @@ class DynamicQueryEngine {
       - "Show all products"
       - "List companies from USA"
       - "What are top selling products"
+      - "Show information about @product:iPhone" -> has specific product mention
       
       If this query needs more specific information, respond with "NEEDS_INFO:" followed by what information is needed.
       If the query is complete, respond with "COMPLETE".
@@ -160,7 +224,7 @@ class DynamicQueryEngine {
     try {
       const paramCheck = await this.model.generateContent(parameterCheckPrompt);
       const paramResponse = paramCheck.response.text().trim();
-      
+
       if (paramResponse.startsWith('NEEDS_INFO:')) {
         const neededInfo = paramResponse.replace('NEEDS_INFO:', '').trim();
         return `I'd be happy to help you with that! To proceed, I need some additional information:\n\n${neededInfo}\n\nCould you please provide these details?`;
@@ -172,13 +236,50 @@ class DynamicQueryEngine {
 
     // Generate and execute the query
     const schema = await this.getSchema();
+    console.log('Schema retrieved:', schema);
+    
+    // Simple query mapping for common requests
+    const simpleQueries: Record<string, string> = {
+      'list companies from usa': 'SELECT * FROM companies WHERE country = \'USA\' LIMIT 20',
+      'list all products': 'SELECT * FROM products LIMIT 20',
+      'show all companies': 'SELECT * FROM companies LIMIT 20',
+      'list of products': 'SELECT * FROM products LIMIT 20',
+      'list products': 'SELECT * FROM products LIMIT 20',
+      'show products': 'SELECT * FROM products LIMIT 20',
+      'all products': 'SELECT * FROM products LIMIT 20',
+    };
+    
+    const queryLower = query.toLowerCase();
+    const simpleQuery = simpleQueries[queryLower];
+    
+    if (simpleQuery) {
+      try {
+        console.log('Using simple query:', simpleQuery);
+        const { data, error } = await this.supabase.rpc('execute_sql', { query: simpleQuery });
+        
+        if (error) {
+          console.error('Simple query error:', error);
+          return `I encountered an error: ${error.message}`;
+        }
+        
+        if (!data || data.length === 0) {
+          return "I didn't find any results for your query. The database might be empty or the query needs adjustment.";
+        }
+        
+        return `Here are the results for "${query}":\n\n${JSON.stringify(data.slice(0, 5), null, 2)}`;
+      } catch (error) {
+        console.error('Simple query execution failed:', error);
+        // Fall through to AI generation
+      }
+    }
+    
     const prompt = `
       You are a business data analyst. Generate a PostgreSQL query to answer the user's question.
       
       DATABASE SCHEMA:
       ${schema}
       
-      USER QUESTION: "${query}"
+      USER QUESTION: "${query}"${mentionsInfo}
       
       RULES:
       1. Only use tables and columns from the schema above
@@ -186,20 +287,23 @@ class DynamicQueryEngine {
       3. Add LIMIT 20 unless user specifies otherwise
       4. For "companies from USA" use WHERE country = 'USA'
       5. For "top selling products" join products and transactions
-      6. Return only the SQL query, no explanation
-    `;
-
-    try {
+      6. When specific entities are mentioned (e.g., @product:iPhone), use their names/IDs in WHERE clauses
+      7. Return only the SQL query, no explanation
+    `;    try {
       const result = await this.model.generateContent(prompt);
       const sqlQuery = result.response.text().trim().replace(/```sql/g, '').replace(/```/g, '').trim();
+      
+      console.log('Generated SQL:', sqlQuery);
       
       // Execute the query
       const { data, error } = await this.supabase.rpc('execute_sql', { query: sqlQuery });
       
       if (error) {
         console.error('SQL execution error:', error);
-        return "I apologize, but I encountered an error while retrieving the data. The query might not be compatible with your database structure. Could you try rephrasing your question?";
+        return `I apologize, but I encountered an error while retrieving the data. Error: ${error.message}. Could you try rephrasing your question?`;
       }
+
+      console.log('Query result:', data);
 
       // Format the response naturally
       if (!data || data.length === 0) {
@@ -228,7 +332,8 @@ class DynamicQueryEngine {
 
     } catch (error) {
       console.error('Query generation/execution error:', error);
-      return "I'm having trouble processing your request right now. Could you try rephrasing your question or asking something else?";
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+      return `I'm having trouble processing your request. Error details: ${errorMessage}. Could you try rephrasing your question?`;
     }
   }
 }
@@ -240,11 +345,11 @@ Deno.serve(async (req) => {
   }
 
   try {
-    const { message, query, history, conversationId } = await req.json();
-    
+    const { message, query, history, conversationId, mentions } = await req.json();
+
     // Support both 'message' and 'query' for backward compatibility
     const userQuery = message || query;
-    
+
     if (!userQuery) {
       throw new Error('No message or query provided');
     }
@@ -267,12 +372,12 @@ Deno.serve(async (req) => {
       responseType = 'conversational';
     } else {
       const engine = new DynamicQueryEngine(supabaseAdmin);
-      responseText = await engine.generateAndExecute(userQuery, history || []);
+      responseText = await engine.generateAndExecute(userQuery, history || [], mentions);
       responseType = 'data';
       functionUsed = 'dynamic_sql_query';
     }
 
-    return new Response(JSON.stringify({ 
+    return new Response(JSON.stringify({
       content: responseText,
       type: responseType,
       functionUsed: functionUsed || undefined,
@@ -284,7 +389,7 @@ Deno.serve(async (req) => {
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     const errorResponse = `I'm sorry, I encountered an error: ${errorMessage}`;
-    return new Response(JSON.stringify({ 
+    return new Response(JSON.stringify({
       content: errorResponse,
       type: 'error'
     }), {
