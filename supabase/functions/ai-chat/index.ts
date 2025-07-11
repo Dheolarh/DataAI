@@ -4,11 +4,24 @@ import { corsHeaders } from '../_shared/cors.ts';
 
 const genAI = new GoogleGenerativeAI(Deno.env.get('GEMINI_API_KEY')!);
 
+interface ChatMessage {
+  sender: string;
+  content: string;
+  timestamp?: string;
+}
+
+interface TableInfo {
+  table_name: string;
+  description?: string;
+  columns: Array<{ column_name: string; data_type: string }>;
+  relationships?: Array<{ from_column: string; to_table: string; to_column: string }>;
+}
+
 // --- 1. INTENT CLASSIFIER ---
 class IntentClassifier {
   private model = genAI.getGenerativeModel({ model: 'gemini-1.5-pro-latest' });
 
-  async classify(query: string, history: any[]): Promise<'conversational' | 'data_query'> {
+  async classify(query: string, history: ChatMessage[]): Promise<'conversational' | 'data_query'> {
     const prompt = `
       You are an intent classifier for a business AI assistant.
       Your task is to determine if the user's query is a general conversation or a request for data from a database.
@@ -40,8 +53,7 @@ class IntentClassifier {
 class ConversationalResponder {
   private model = genAI.getGenerativeModel({ model: 'gemini-1.5-pro-latest' });
 
-<<<<<<< HEAD
-  async generateResponse(query: string, history: any[]): Promise<string> {
+  async generateResponse(query: string, history: ChatMessage[]): Promise<string> {
     const prompt = `
       You are Stella, a friendly and helpful AI business assistant.
       The user is having a general conversation with you. Respond naturally and helpfully.
@@ -66,7 +78,7 @@ class ConversationalResponder {
 
 // --- 3. DYNAMIC QUERY ENGINE (FINAL, STRICT VERSION) ---
 class DynamicQueryEngine {
-    private model = genAI.getGenerativeModel({
+  private model = genAI.getGenerativeModel({
     model: 'gemini-1.5-pro-latest',
     safetySettings: [
       { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
@@ -84,18 +96,18 @@ class DynamicQueryEngine {
       console.error('Schema analysis failed:', error);
       return 'Database schema information unavailable';
     }
-    return data.map((table: any) => {
+    return data.map((table: TableInfo) => {
         let tableInfo = `Table \`${table.table_name}\`:\n`;
         if (table.description) tableInfo += `  - Description: ${table.description}\n`;
-        tableInfo += `  - Columns: ${table.columns.map((c: any) => `${c.column_name} (${c.data_type})`).join(', ')}\n`;
+        tableInfo += `  - Columns: ${table.columns.map((c) => `${c.column_name} (${c.data_type})`).join(', ')}\n`;
         if (table.relationships && table.relationships.length > 0) {
-            tableInfo += `  - Relationships: ${table.relationships.map((r: any) => `\`${r.from_column}\` -> \`${r.to_table}\`.\`${r.to_column}\``).join(', ')}\n`;
+            tableInfo += `  - Relationships: ${table.relationships.map((r) => `\`${r.from_column}\` -> \`${r.to_table}\`.\`${r.to_column}\``).join(', ')}\n`;
         }
         return tableInfo;
     }).join('\n');
   }
 
-  async generateAndExecute(query: string, history: any[]): Promise<string> {
+  async generateAndExecute(query: string, _history: ChatMessage[]): Promise<string> {
     const schema = await this.getSchema();
     const prompt = `
       You are a hyper-intelligent data analyst AI. Your ONLY task is to answer the user's question by generating a valid PostgreSQL query against the provided database schema. You must follow all rules strictly.
@@ -131,8 +143,6 @@ class DynamicQueryEngine {
       Return ONLY the JSON object.
     `;
 
-=======
->>>>>>> parent of 070ecd1 (Add product fix)
     try {
       const result = await this.model.generateContent(prompt);
       const responseTextCleaned = result.response.text().replace(/```json/g, '').replace(/```/g, '').trim();
@@ -141,15 +151,11 @@ class DynamicQueryEngine {
       const thoughtProcess = responseJson.thought_process;
       const sql = (responseJson.sql || '').trim().replace(/;$/, '');
 
-<<<<<<< HEAD
       if (!sql) {
         return "I'm sorry, I was unable to construct a query for that request. Please try rephrasing.";
       }
 
       const { data: queryData, error: queryError } = await this.supabase.rpc('execute_sql', { query: sql });
-=======
-        const sql = postgres(supabaseDbUrl);
->>>>>>> parent of 070ecd1 (Add product fix)
 
       let responseText = `🧠 **Thought Process:**\n${thoughtProcess}\n\n`;
       responseText += `💻 **Executed SQL:**\n\`\`\`sql\n${sql}\n\`\`\`\n\n`;
@@ -170,7 +176,8 @@ class DynamicQueryEngine {
 
     } catch (e) {
       console.error("Query generation/execution failed:", e);
-      return `I'm sorry, I encountered an error while trying to answer your question. The AI model may have returned an invalid response. Details: ${e.message}`;
+      const errorMessage = e instanceof Error ? e.message : 'Unknown error';
+      return `I'm sorry, I encountered an error while trying to answer your question. The AI model may have returned an invalid response. Details: ${errorMessage}`;
     }
   }
 }
@@ -206,7 +213,8 @@ Deno.serve(async (req) => {
     });
 
   } catch (error) {
-    const errorResponse = `❌ **Critical Error:** ${error.message || 'Unknown error'}\n\n`;
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    const errorResponse = `❌ **Critical Error:** ${errorMessage}\n\n`;
     return new Response(JSON.stringify({ response: errorResponse }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       status: 500
